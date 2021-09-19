@@ -6,6 +6,8 @@ use winit::{
     window::WindowBuilder,
 };
 
+mod color;
+mod light;
 mod vector;
 
 const WIDTH: u32 = 800;
@@ -15,53 +17,20 @@ const VIEWPORT_DISTANCE: f64 = 1.0;
 const VIEWPORT_HEIGHT: u32 = 1;
 const VIEWPORT_WIDTH: u32 = 1;
 
-#[derive(Copy, Clone, Debug)]
-struct Color {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
-}
+type Canvas = [[color::Color; WIDTH as usize]; HEIGHT as usize];
 
-const BACKGROUND_GREEN: Color = Color {
-    r: 0,
-    g: 56,
-    b: 68,
-    a: 255,
-};
-
-const GREEN: Color = Color {
-    r: 0,
-    g: 108,
-    b: 103,
-    a: 255,
-};
-
-const PINK: Color = Color {
-    r: 241,
-    g: 148,
-    b: 180,
-    a: 255,
-};
-
-const YELLOW: Color = Color {
-    r: 255,
-    g: 177,
-    b: 0,
-    a: 255,
-};
-
-type Canvas = [[Color; WIDTH as usize]; HEIGHT as usize];
-
-const BACKGROUND_COLOR: Color = BACKGROUND_GREEN;
+const BACKGROUND_COLOR: color::Color = color::BACKGROUND_GREEN;
 
 struct Sphere {
     c: vector::Vec3,
     r: f32,
-    color: Color,
+    color: color::Color,
 }
 
-type Scene = Vec<Sphere>;
+struct Scene {
+    spheres: Vec<Sphere>,
+    lights: Vec<light::Light>,
+}
 
 /**  "Because the viewport is measured in world units and the canvas
  * is measured in pixels, going from canvas coordinates to space
@@ -113,10 +82,16 @@ fn draw_canvas(canvas: Canvas, frame: &mut [u8]) {
     }
 }
 
-fn trace_ray(from: &vector::Vec3, to: &vector::Vec3, min: f64, max: f64, scene: &Scene) -> Color {
+fn trace_ray(
+    from: &vector::Vec3,
+    to: &vector::Vec3,
+    min: f64,
+    max: f64,
+    scene: &Scene,
+) -> color::Color {
     let mut closest_t: f64 = f64::MAX;
     let mut closest_sphere: Option<&Sphere> = None;
-    for sphere in scene {
+    for sphere in scene.spheres.iter() {
         let (t1, t2) = intersect_ray_sphere(from, to, sphere);
         if (min..max).contains(&t1) && t1 < closest_t {
             closest_t = t1;
@@ -127,19 +102,30 @@ fn trace_ray(from: &vector::Vec3, to: &vector::Vec3, min: f64, max: f64, scene: 
             closest_sphere = Some(sphere);
         }
     }
-    let color = closest_sphere.map_or(BACKGROUND_COLOR, |s| s.color);
-    return color;
+    match closest_sphere {
+        Some(sphere) => {
+            let color = sphere.color;
+            let ray_point = vector::add3(from, &vector::scalar_product3(to, closest_t));
+            let normal_ = vector::sub3(&ray_point, &sphere.c);
+            let normal = vector::scalar_div3(&normal_, vector::magnitude3(&normal_));
+            return color::multiply(
+                &color,
+                light::compute_lighting(&ray_point, &normal, &scene.lights),
+            );
+        }
+        None => {
+            return BACKGROUND_COLOR;
+        }
+    }
 }
 
-fn draw_pixel(canvas: &mut Canvas, p: &vector::Vec2, c: Color) {
+fn draw_pixel(canvas: &mut Canvas, p: &vector::Vec2, c: color::Color) {
     let canvas_x = p.x + (WIDTH as f64) / 2.0;
     let canvas_y = -1.0 * (p.y - (HEIGHT as f64) / 2.0) - 1.0;
     canvas[canvas_y as usize][canvas_x as usize] = c;
 }
 
 fn raytrace_to_canvas(canvas: &mut Canvas, o: &vector::Vec3, scene: &Scene) {
-    // let x = -400;
-    // let y = -400;
     for x in -((WIDTH as i32) / 2)..((WIDTH as i32) / 2) {
         for y in -((HEIGHT as i32) / 2)..((HEIGHT as i32) / 2) {
             let canvas_point = vector::Vec2 {
@@ -166,7 +152,7 @@ fn main() {
     let surface = SurfaceTexture::new(window_size.width, window_size.height, &window);
     let mut pixels = Pixels::new(WIDTH, HEIGHT, surface).unwrap();
 
-    let mut canvas: Canvas = [[Color {
+    let mut canvas: Canvas = [[color::Color {
         r: 255,
         g: 255,
         b: 255,
@@ -179,43 +165,62 @@ fn main() {
         z: 0.0,
     };
 
-    let mut scene: Scene = Vec::new();
-    scene.push(Sphere {
+    let mut scene: Scene = Scene {
+        spheres: Vec::new(),
+        lights: Vec::new(),
+    };
+    scene.spheres.push(Sphere {
         c: vector::Vec3 {
             x: 0.0,
             y: -0.5,
-            z: 3.0,
+            z: 6.0,
         },
         r: 1.0,
-        color: PINK,
+        color: color::PINK,
     });
-    scene.push(Sphere {
+    scene.spheres.push(Sphere {
         c: vector::Vec3 {
             x: 2.0,
             y: 0.0,
             z: 4.0,
         },
         r: 0.3,
-        color: GREEN,
+        color: color::GREEN,
     });
-    scene.push(Sphere {
+    scene.spheres.push(Sphere {
         c: vector::Vec3 {
             x: -2.0,
             y: 0.0,
             z: 4.0,
         },
         r: 1.2,
-        color: YELLOW,
+        color: color::YELLOW,
     });
-
-    scene.push(Sphere {
+    scene.spheres.push(Sphere {
         c: vector::Vec3 {
             x: 1.0,
             y: -1.0,
             z: 3.0,
         },
         r: 0.3,
-        color: GREEN,
+        color: color::GREEN,
+    });
+    scene.lights.push(light::Light::Ambient { intensity: 0.3 });
+    scene.lights.push(light::Light::Point {
+        intensity: 0.7,
+        position: vector::Vec3 {
+            x: -2.0,
+            y: 1.0,
+            z: 0.0,
+        },
+    });
+    scene.lights.push(light::Light::Directional {
+        intensity: 0.9,
+        direction: vector::Vec3 {
+            x: 1.0,
+            y: 4.0,
+            z: 4.0,
+        },
     });
 
     let frame = pixels.get_frame();
