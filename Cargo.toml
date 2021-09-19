@@ -1,0 +1,10 @@
+[package]
+name = "raytracer"
+version = "0.1.0"
+authors = ["liamdyer <liamd94@gmail.com>"]
+edition = "2018"
+resolver = "2"
+
+[dependencies]
+pixels = "0.6.0"
+winit = "0.24.0"
